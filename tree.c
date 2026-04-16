@@ -129,9 +129,85 @@ int tree_serialize(const Tree *tree, void **data_out, size_t *len_out) {
 //   - object_write    : save that binary buffer to the store as OBJ_TREE
 //
 // Returns 0 on success, -1 on error.
+// ─── Helper: recursively build tree for a subset of index entries ────────────
+// entries: pointer into the index entries array
+// count:   how many entries to process
+// prefix_len: how many leading characters of path to skip (already consumed by parent dirs)
+static int write_tree_level(IndexEntry *entries, int count, int prefix_len, ObjectID *id_out) {
+    Tree tree;
+    tree.count = 0;
+
+    int i = 0;
+    while (i < count && tree.count < MAX_TREE_ENTRIES) {
+        // Strip the already-consumed prefix to get the relative path
+        const char *rel_path = entries[i].path + prefix_len;
+        const char *slash    = strchr(rel_path, '/');
+
+        if (!slash) {
+            // ── Direct file at this level ──────────────────────────────────
+            TreeEntry *e = &tree.entries[tree.count++];
+            strncpy(e->name, rel_path, sizeof(e->name) - 1);
+            e->name[sizeof(e->name) - 1] = '\0';
+            e->mode = entries[i].mode;
+            e->hash = entries[i].id;   // ObjectID copy
+            i++;
+        } else {
+            // ── Subdirectory: collect all entries sharing this dir prefix ──
+            int dir_len = slash - rel_path;  // length of directory name
+
+            char dir_name[256] = {0};
+            strncpy(dir_name, rel_path, dir_len);
+
+            // Find how many consecutive entries belong to this subdirectory
+            int j = i;
+            while (j < count) {
+                const char *p = entries[j].path + prefix_len;
+                // Must start with "dir_name/"
+                if (strncmp(p, dir_name, dir_len) != 0 || p[dir_len] != '/')
+                    break;
+                j++;
+            }
+
+            // Recursively build the subtree for entries[i..j-1]
+            // New prefix_len skips past "dir_name/"
+            ObjectID sub_id;
+            if (write_tree_level(entries + i, j - i,
+                                 prefix_len + dir_len + 1, &sub_id) != 0)
+                return -1;
+
+            // Add a directory entry pointing to the subtree
+            TreeEntry *e = &tree.entries[tree.count++];
+            strncpy(e->name, dir_name, sizeof(e->name) - 1);
+            e->name[sizeof(e->name) - 1] = '\0';
+            e->mode = MODE_DIR;
+            e->hash = sub_id;
+
+            i = j;  // jump past all entries we just processed
+        }
+    }
+
+    // Serialize and write this tree level to the object store
+    void *data;
+    size_t len;
+    if (tree_serialize(&tree, &data, &len) != 0) return -1;
+
+    int ret = object_write(OBJ_TREE, data, len, id_out);
+    free(data);
+    return ret;
+}
+
+// Build a tree hierarchy from the current index and write all tree
+// objects to the object store.
 int tree_from_index(ObjectID *id_out) {
-    // TODO: Implement recursive tree building
-    // (See Lab Appendix for logical steps)
-    (void)id_out;
-    return -1;
+    // Load the staged index
+    Index idx;
+    memset(&idx, 0, sizeof(idx));
+    if (index_load(&idx) != 0) return -1;
+    if (idx.count == 0) {
+        fprintf(stderr, "error: nothing staged to commit\n");
+        return -1;
+    }
+
+    // Recursively build from the root level (prefix_len = 0)
+    return write_tree_level(idx.entries, (int)idx.count, 0, id_out);
 }
