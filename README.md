@@ -600,3 +600,13 @@ The following questions cover filesystem concepts beyond the implementation scop
 - **Git Internals** (Pro Git book): https://git-scm.com/book/en/v2/Git-Internals-Plumbing-and-Porcelain
 - **Git from the inside out**: https://codewords.recurse.com/issues/two/git-from-the-inside-out
 - **The Git Parable**: https://tom.preston-werner.com/2009/05/19/the-git-parable.html
+Q5.1 — Branching and Checkout:
+To implement pes checkout <branch>: (1) Read the new branch's ref file to get its commit hash. (2) Read that commit's tree. (3) Recursively restore all files from the tree objects into the working directory. (4) Update .pes/HEAD to say ref: refs/heads/<branch>. The complexity lies in safely updating the working directory — you must not overwrite files with uncommitted changes.
+Q5.2 — Detecting Dirty Working Directory:
+For each file in the index, compare its mtime and size against the current working directory file. If they differ, the file is "dirty." If the target branch's tree has a different blob hash for that path, refuse checkout and print an error.
+Q5.3 — Detached HEAD:
+In detached HEAD, commits are made but no branch pointer is updated — they become unreachable once HEAD moves. Recovery is possible if the user remembers the commit hash or uses pes log before moving away. A new branch can be created from that hash to "anchor" the commits.
+Q6.1 — Garbage Collection Algorithm:
+Start from all branch refs, do a DFS/BFS traversal following commit parents and tree children, collecting all reachable hashes into a set. Then scan all files in .pes/objects/, delete any not in the reachable set. Use a HashSet (hash table). For 100,000 commits with an average of 10 objects each, you'd visit ~1,000,000 objects.
+Q6.2 — GC Race Condition:
+A concurrent commit may: (1) write a new blob, (2) GC scans and doesn't see it referenced yet, (3) GC deletes it, (4) commit tries to finalize with now-missing blob → corruption. Git avoids this by setting a minimum age for GC candidates (objects must be older than 2 weeks before they can be collected as unreachable).
