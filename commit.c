@@ -194,8 +194,64 @@ int head_update(const ObjectID *new_commit) {
 //
 // Returns 0 on success, -1 on error.
 int commit_create(const char *message, ObjectID *commit_id_out) {
-    // TODO: Implement commit creation
-    // (See Lab Appendix for logical steps)
-    (void)message; (void)commit_id_out;
-    return -1;
+    // Ensure index exists
+    Index index;
+    if (index_load(&index) != 0) return -1;
+
+    if (index.count == 0) {
+        printf("nothing to commit\n");
+        return -1;
+    }
+
+    // Build tree
+    ObjectID tree_id;
+    if (tree_from_index(&tree_id) != 0) {
+        printf("tree build failed\n");
+        return -1;
+    }
+
+    // Parent
+    ObjectID parent_id;
+    int has_parent = (head_read(&parent_id) == 0);
+
+    const char *author = pes_author();
+    time_t now = time(NULL);
+
+    char buffer[2048];
+    int len = 0;
+
+    // Tree
+    len += sprintf(buffer + len, "tree ");
+    for (int i = 0; i < 32; i++)
+        len += sprintf(buffer + len, "%02x", tree_id.hash[i]);
+    len += sprintf(buffer + len, "\n");
+
+    // Parent
+    if (has_parent) {
+        len += sprintf(buffer + len, "parent ");
+        for (int i = 0; i < 32; i++)
+            len += sprintf(buffer + len, "%02x", parent_id.hash[i]);
+        len += sprintf(buffer + len, "\n");
+    }
+
+    // Author
+    len += sprintf(buffer + len, "author %s %ld\n", author, now);
+    len += sprintf(buffer + len, "committer %s %ld\n\n", author, now);
+
+    // Message
+    len += sprintf(buffer + len, "%s\n", message);
+
+    // Write commit
+    if (object_write(OBJ_COMMIT, buffer, len, commit_id_out) != 0) {
+        printf("object write failed\n");
+        return -1;
+    }
+
+    // Update HEAD
+    if (head_update(commit_id_out) != 0) {
+        printf("head update failed\n");
+        return -1;
+    }
+
+    return 0;
 }
