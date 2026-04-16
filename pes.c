@@ -65,22 +65,38 @@ void cmd_status(void) {
 }
 
 // Usage: pes commit -m <message>
-void cmd_commit(int argc, char *argv[]) {
-    if (argc < 4 || strcmp(argv[2], "-m") != 0) {
+int cmd_commit(int argc, char **argv) {
+    // Parse -m flag
+    const char *message = NULL;
+    for (int i = 0; i < argc - 1; i++) {
+        if (strcmp(argv[i], "-m") == 0) {
+            message = argv[i + 1];
+            break;
+        }
+    }
+
+    if (!message) {
         fprintf(stderr, "error: commit requires a message (-m \"message\")\n");
-        return;
+        return 1;
     }
 
-    const char *message = argv[3];
+    // Load the index
+    Index idx = {0};
+    if (index_load(&idx) != 0) return 1;
+
+    // Create the commit
     ObjectID commit_id;
-    if (commit_create(message, &commit_id) != 0) {
+    if (commit_create(&idx, message, &commit_id) != 0) {
         fprintf(stderr, "error: commit failed\n");
-        return;
+        return 1;
     }
 
+    // Print success
     char hex[HASH_HEX_SIZE + 1];
     hash_to_hex(&commit_id, hex);
     printf("Committed: %.12s... %s\n", hex, message);
+
+    return 0;
 }
 
 // Callback for commit_walk used by cmd_log.
